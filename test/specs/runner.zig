@@ -1466,50 +1466,10 @@ fn runJsonTestImplWithOptionalFork(allocator: std.mem.Allocator, test_case: std.
             var sender: Address = primitives.ZERO_ADDRESS;
             if (tx.object.get("sender")) |s| {
                 sender = try parseAddress(s.string);
-            } else if (tx.object.get("secretKey") != null) {
-                // Heuristic: if sender is not explicitly provided, try to find a pre-state account
-                // whose nonce matches the transaction nonce. This aligns with how fixtures select senders.
-                const tx_nonce: u64 = if (tx.object.get("nonce")) |n|
-                    try parseIntFromJson(n)
-                else
-                    0;
-
-                var chosen: ?Address = null;
-                if (test_case.object.get("pre")) |pre| {
-                    if (pre == .object) {
-                        var it = pre.object.iterator();
-                        // Track best candidate by having sufficient balance for upfront gas + value
-                        while (it.next()) |kv| {
-                            const addr = try parseAddress(kv.key_ptr.*);
-                            const acct = kv.value_ptr.*;
-                            const acct_nonce: u64 = if (acct.object.get("nonce")) |n|
-                                try parseIntFromJson(n)
-                            else
-                                0;
-                            if (acct_nonce != tx_nonce) continue;
-                            // Check affordability if balance is provided
-                            const acct_balance: u256 = if (acct.object.get("balance")) |b|
-                                if (b.string.len == 0) 0 else try std.fmt.parseInt(u256, b.string, 0)
-                            else
-                                0;
-                            // Use max_fee_per_gas for affordability check (not effective price)
-                            const upfront_gas_cost = @as(u256, gas_limit) * max_fee_per_gas_for_validation;
-                            if (acct_balance >= (upfront_gas_cost + value)) {
-                                chosen = addr;
-                                break; // good match
-                            } else if (chosen == null) {
-                                // Fallback to first nonce-matching account if none affordable
-                                chosen = addr;
-                            }
-                        }
-                    }
-                }
-                if (chosen) |addr| {
-                    sender = addr;
-                } else {
-                    // Fallback to legacy default test key address
-                    sender = try Address.fromHex("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b");
-                }
+            } else if (tx.object.get("secretKey")) |secret_key| {
+                // State tests provide the signing key; derive the sender directly instead of
+                // guessing from pre-state nonce/balance, which can select a contract account.
+                sender = try deriveSenderFromSecretKey(allocator, secret_key.string);
             }
 
             // Set per-tx origin and gas_price on the EVM instance
@@ -2443,6 +2403,52 @@ fn parseFixedHexBytes(comptime N: usize, allocator: std.mem.Allocator, value: st
     var out: [N]u8 = [_]u8{0} ** N;
     @memcpy(out[N - bytes.len ..], bytes);
     return out;
+}
+
+fn parsePrivateKey(allocator: std.mem.Allocator, secret_key: []const u8) ![32]u8 {
+    var buf: [66]u8 = undefined;
+    var clean_key = secret_key;
+
+    // Handle placeholder syntax like <eoa:sender:0x...>
+    if (std.mem.startsWith(u8, secret_key, "<") and std.mem.endsWith(u8, secret_key, ">")) {
+        if (std.mem.lastIndexOf(u8, secret_key, "0x")) |idx| {
+            clean_key = secret_key[idx..];
+            if (std.mem.indexOf(u8, clean_key, ">")) |end_idx| {
+                clean_key = clean_key[0..end_idx];
+            }
+        }
+    }
+
+    const final_key: []const u8 = if (std.mem.startsWith(u8, clean_key, "0x")) blk: {
+        break :blk clean_key;
+    } else blk: {
+        if (clean_key.len > 64) return error.InvalidPrivateKey;
+
+        buf[0] = '0';
+        buf[1] = 'x';
+
+        const zeros_needed = 64 - clean_key.len;
+        for (0..zeros_needed) |i| {
+            buf[2 + i] = '0';
+        }
+        @memcpy(buf[2 + zeros_needed .. 66], clean_key);
+        break :blk buf[0..66];
+    };
+
+    const bytes = try primitives.Hex.hexToBytes(allocator, final_key);
+    defer allocator.free(bytes);
+
+    if (bytes.len > 32) return error.InvalidPrivateKey;
+
+    var private_key: [32]u8 = [_]u8{0} ** 32;
+    @memcpy(private_key[32 - bytes.len ..], bytes);
+    return private_key;
+}
+
+fn deriveSenderFromSecretKey(allocator: std.mem.Allocator, secret_key: []const u8) !Address {
+    const private_key = try parsePrivateKey(allocator, secret_key);
+    const public_key = try primitives.PublicKey.fromPrivateKey(private_key);
+    return primitives.PublicKey.toAddress(public_key);
 }
 
 fn parseAddress(addr: []const u8) !Address {
