@@ -655,9 +655,7 @@ describe("TxPool", () => {
     Effect.gen(function* () {
       const outcome = yield* Effect.either(
         getPendingCount().pipe(
-          Effect.provide(
-            makeTxPoolLayer({ ...TxPoolConfigDefaults, size: -1 }),
-          ),
+          Effect.provide(TxPoolLive({ ...TxPoolConfigDefaults, size: -1 })),
         ),
       );
       assert.isTrue(Either.isLeft(outcome));
