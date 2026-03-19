@@ -274,7 +274,7 @@ export const EmptyNodePath: TrieNodePath = {
 };
 
 const isEmptyTrieRoot = (nodeHash: Hash.HashType): boolean =>
-  Hash.equals(nodeHash, EMPTY_TRIE_ROOT);
+  Hex.fromBytes(nodeHash) === EmptyTrieRootHex;
 
 const decodeRlp = (encodedNode: BytesType) =>
   coerceEffect<{ data: RlpType; remainder: Uint8Array }, unknown>(

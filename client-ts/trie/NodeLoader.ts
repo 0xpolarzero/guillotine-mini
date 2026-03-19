@@ -3,7 +3,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { Hash } from "voltaire-effect/primitives";
+import { Hash, Hex } from "voltaire-effect/primitives";
 import type { EncodedNode, TrieNode } from "./Node";
 import type { BytesType } from "./Node";
 import type { TrieNodePath } from "./NodeStorage";
@@ -46,8 +46,9 @@ const { bytesFromUint8Array } = makeBytesHelpers(
   (message) => new TrieNodeLoaderError({ message }),
 );
 
-const isEmptyTrieRoot = (hash: Hash.HashType) =>
-  Hash.equals(hash, EMPTY_TRIE_ROOT);
+const EmptyTrieRootHex = Hex.fromBytes(EMPTY_TRIE_ROOT);
+const isEmptyTrieRoot = (hash: Hash.HashType): boolean =>
+  Hex.fromBytes(hash) === EmptyTrieRootHex;
 
 const encodeRlp = (
   data: Parameters<typeof import("voltaire-effect/primitives").Rlp.encode>[0],
